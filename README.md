@@ -67,4 +67,4 @@ Every advanced model is compared against the seasonal-naive benchmark.
 
 ## Author
 
-Built as part of the Advanced Research Topics module, Ulster University.
+Built as part of the Advanced Research Topics module, University of Hertfordshire.
