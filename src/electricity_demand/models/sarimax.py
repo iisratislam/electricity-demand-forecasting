@@ -3,13 +3,17 @@ sarimax.py
 ----------
 SARIMA / SARIMAX model fitting, order selection, and forecasting.
 
-Order selection uses the Akaike Information Criterion (AIC), which balances
-model fit against complexity. Fits that fail to converge are skipped rather
-than raising, so the search is robust across the full parameter grid.
+Order selection uses the Akaike Information Criterion (AIC), which balances model
+fit against complexity. Fits that fail to converge are skipped rather than
+raising, so the search is robust across the full parameter grid.
+
+The resumable search variant persists results to disk after every fit, allowing a
+long grid search to survive runtime interruptions.
 """
 
 from __future__ import annotations
 import itertools
+import os
 import warnings
 
 import numpy as np
@@ -19,8 +23,9 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 warnings.filterwarnings("ignore")
 
 
-def search_sarima_orders(
+def search_sarima_orders_resumable(
     y_train: pd.Series,
+    checkpoint_path: str,
     p_range=range(0, 7),
     d_range=range(0, 3),
     q_range=range(0, 7),
@@ -28,30 +33,47 @@ def search_sarima_orders(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    Grid-search non-seasonal (p, d, q) orders by AIC, with the seasonal
-    component held fixed.
+    Grid-search non-seasonal (p, d, q) orders by AIC, saving progress after
+    every fit.
+
+    Results are appended to a CSV checkpoint file. If the search is interrupted,
+    re-running this function skips any combination already recorded, allowing the
+    search to resume rather than restart.
 
     Parameters
     ----------
     y_train : pd.Series
         Training series.
+    checkpoint_path : str
+        CSV file used to persist results between runs.
     p_range, d_range, q_range : iterable of int
         Candidate values for the AR order, differencing order, and MA order.
     seasonal_order : tuple
         Fixed seasonal order (P, D, Q, s).
     verbose : bool
-        If True, print progress and each successful fit's AIC.
+        If True, print progress for each fit.
 
     Returns
     -------
     pd.DataFrame
-        One row per successful fit, with columns (p, d, q, aic), sorted by AIC.
+        All results recorded so far, sorted by AIC ascending (best first).
     """
-    results = []
+    # Resume from any previously completed fits
+    if os.path.exists(checkpoint_path):
+        done = pd.read_csv(checkpoint_path)
+        completed = {tuple(r) for r in done[["p", "d", "q"]].values}
+        if verbose:
+            print(f"Resuming: {len(completed)} combinations already completed.\n")
+    else:
+        completed = set()
+
     combos = list(itertools.product(p_range, d_range, q_range))
     total = len(combos)
 
     for i, (p, d, q) in enumerate(combos, start=1):
+        if (p, d, q) in completed:
+            continue                      # already fitted in an earlier run
+
         try:
             model = SARIMAX(
                 y_train,
@@ -62,7 +84,7 @@ def search_sarima_orders(
                 enforce_invertibility=False,
             )
             fit = model.fit(disp=False)
-            results.append({"p": p, "d": d, "q": q, "aic": fit.aic})
+            row = {"p": p, "d": d, "q": q, "aic": fit.aic}
 
             if verbose:
                 print(f"[{i:3d}/{total}] SARIMA({p},{d},{q}) AIC={fit.aic:.2f}")
@@ -71,6 +93,75 @@ def search_sarima_orders(
             # Non-convergent or invalid parameterisations are skipped
             if verbose:
                 print(f"[{i:3d}/{total}] SARIMA({p},{d},{q}) failed - skipped")
+            continue
+
+        # Persist immediately so nothing is lost on disconnection
+        pd.DataFrame([row]).to_csv(
+            checkpoint_path,
+            mode="a",
+            header=not os.path.exists(checkpoint_path),
+            index=False,
+        )
+
+    results = pd.read_csv(checkpoint_path)
+    return results.sort_values("aic").reset_index(drop=True)
+
+
+def search_seasonal_orders(
+    y_train: pd.Series,
+    order: tuple,
+    P_range=range(0, 2),
+    D_range=range(0, 2),
+    Q_range=range(0, 2),
+    s: int = 52,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """
+    Grid-search seasonal orders (P, D, Q) by AIC, with (p, d, q) held fixed.
+
+    This is the second stage of a staged order-selection procedure: the
+    non-seasonal orders are chosen first, then the seasonal structure refined.
+
+    Parameters
+    ----------
+    y_train : pd.Series
+        Training series.
+    order : tuple
+        Fixed non-seasonal order (p, d, q) from stage one.
+    P_range, D_range, Q_range : iterable of int
+        Candidate seasonal AR, differencing, and MA orders.
+    s : int, default 52
+        Seasonal period (52 weeks = one year).
+    verbose : bool
+        If True, print each fit's AIC.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns (P, D, Q, aic), sorted by AIC ascending.
+    """
+    results = []
+    combos = list(itertools.product(P_range, D_range, Q_range))
+
+    for i, (P, D, Q) in enumerate(combos, start=1):
+        try:
+            model = SARIMAX(
+                y_train,
+                order=order,
+                seasonal_order=(P, D, Q, s),
+                trend="c" if order[1] == 0 else None,
+                enforce_stationarity=False,
+                enforce_invertibility=False,
+            )
+            fit = model.fit(disp=False)
+            results.append({"P": P, "D": D, "Q": Q, "aic": fit.aic})
+
+            if verbose:
+                print(f"[{i}/{len(combos)}] seasonal({P},{D},{Q},{s}) AIC={fit.aic:.2f}")
+
+        except Exception:
+            if verbose:
+                print(f"[{i}/{len(combos)}] seasonal({P},{D},{Q},{s}) failed - skipped")
             continue
 
     return pd.DataFrame(results).sort_values("aic").reset_index(drop=True)
@@ -130,7 +221,7 @@ def forecast_sarimax(model_fit, horizon: int, index: pd.Index,
     Returns
     -------
     tuple of (pd.Series, pd.DataFrame)
-        (point forecast, confidence interval with lower/upper columns)
+        (point forecast, confidence interval with lower and upper columns)
     """
     fc = model_fit.get_forecast(steps=horizon, exog=X_test)
     mean = fc.predicted_mean
@@ -138,87 +229,3 @@ def forecast_sarimax(model_fit, horizon: int, index: pd.Index,
     mean.index = index
     conf.index = index
     return mean, conf
-
-
-def search_sarima_orders_resumable(
-    y_train: pd.Series,
-    checkpoint_path: str,
-    p_range=range(0, 7),
-    d_range=range(0, 3),
-    q_range=range(0, 7),
-    seasonal_order=(1, 1, 1, 52),
-    verbose: bool = True,
-) -> pd.DataFrame:
-    """
-    Grid-search (p, d, q) by AIC, saving progress after every fit.
-
-    Results are appended to a CSV checkpoint file. If the search is interrupted,
-    re-running this function skips any combination already recorded, allowing
-    the search to resume rather than restart.
-
-    Parameters
-    ----------
-    y_train : pd.Series
-        Training series.
-    checkpoint_path : str
-        CSV file used to persist results between runs.
-    p_range, d_range, q_range : iterable of int
-        Candidate orders to search.
-    seasonal_order : tuple
-        Fixed seasonal order (P, D, Q, s).
-    verbose : bool
-        If True, print progress for each fit.
-
-    Returns
-    -------
-    pd.DataFrame
-        All results so far, sorted by AIC (best first).
-    """
-    import os
-
-    # Resume from any previously completed fits
-    if os.path.exists(checkpoint_path):
-        done = pd.read_csv(checkpoint_path)
-        completed = {tuple(r) for r in done[["p", "d", "q"]].values}
-        if verbose:
-            print(f"Resuming: {len(completed)} combinations already done.\n")
-    else:
-        completed = set()
-
-    combos = list(itertools.product(p_range, d_range, q_range))
-    total = len(combos)
-
-    for i, (p, d, q) in enumerate(combos, start=1):
-        if (p, d, q) in completed:
-            continue                       # already fitted in an earlier run
-
-        try:
-            model = SARIMAX(
-                y_train,
-                order=(p, d, q),
-                seasonal_order=seasonal_order,
-                trend="c" if d == 0 else None,
-                enforce_stationarity=False,
-                enforce_invertibility=False,
-            )
-            fit = model.fit(disp=False)
-            row = {"p": p, "d": d, "q": q, "aic": fit.aic}
-
-            if verbose:
-                print(f"[{i:3d}/{total}] SARIMA({p},{d},{q}) AIC={fit.aic:.2f}")
-
-        except Exception:
-            if verbose:
-                print(f"[{i:3d}/{total}] SARIMA({p},{d},{q}) failed - skipped")
-            continue
-
-        # Persist immediately so nothing is lost on disconnect
-        pd.DataFrame([row]).to_csv(
-            checkpoint_path,
-            mode="a",
-            header=not os.path.exists(checkpoint_path),
-            index=False,
-        )
-
-    results = pd.read_csv(checkpoint_path)
-    return results.sort_values("aic").reset_index(drop=True)
