@@ -112,3 +112,57 @@ def build_weekly_temperature_features(
     # Reindex onto the exact load weekly index; interpolate any small gaps
     feats = feats.reindex(weekly_index).interpolate("time")
     return feats
+
+
+def make_supervised_table(
+    data: pd.DataFrame,
+    target: str = "load_gw",
+    lags=(1, 2, 3, 4, 52),
+    roll_window: int = 4,
+) -> pd.DataFrame:
+    """
+    Build a leakage-free supervised-learning table for demand forecasting.
+
+    Each row predicts the target at week t using only information available before
+    week t. Lag and rolling features are shifted by one step so the current
+    target never leaks into its own predictors.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Must contain the target column and any temperature feature columns.
+    target : str, default "load_gw"
+        Name of the column to be forecast.
+    lags : tuple of int
+        Which past weeks of the target to include as lag features.
+    roll_window : int, default 4
+        Window length (in weeks) for the rolling mean and standard deviation.
+
+    Returns
+    -------
+    pd.DataFrame
+        Feature table including the target, with early rows containing NaNs
+        (from the longest lag) dropped.
+    """
+    df = data.copy()
+
+    # Lag features: demand at previous weeks
+    for lag in lags:
+        df[f"lag_{lag}"] = df[target].shift(lag)
+
+    # Rolling features: computed on PAST values only (shift(1) before rolling)
+    past = df[target].shift(1)
+    df[f"roll_mean_{roll_window}"] = past.rolling(roll_window).mean()
+    df[f"roll_std_{roll_window}"]  = past.rolling(roll_window).std()
+
+    # Calendar features, encoded cyclically so week 52 and week 1 are adjacent
+    week = df.index.isocalendar().week.astype(int).values
+    month = df.index.month.values
+    df["week_sin"]  = np.sin(2 * np.pi * week / 52)
+    df["week_cos"]  = np.cos(2 * np.pi * week / 52)
+    df["month_sin"] = np.sin(2 * np.pi * month / 12)
+    df["month_cos"] = np.cos(2 * np.pi * month / 12)
+
+    # Drop rows with NaNs introduced by the longest lag / rolling window
+    df = df.dropna()
+    return df
