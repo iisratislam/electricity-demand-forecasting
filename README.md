@@ -38,32 +38,26 @@ A reproducible time-series forecasting pipeline that models and forecasts weekly
 ---
 
 ## Project Structure
-electricity-demand-forecasting/
-├── data/
-│ └── raw/ # raw OPSD CSV (not committed, download below)
-├── src/electricity_demand/ # reusable pipeline package
-│ ├── data.py # load, clean, resample OPSD data
-│ ├── features.py # temperature, lag, rolling, calendar features
-│ ├── evaluation.py # MAE, RMSE, MASE, Bias metrics
-│ └── models/
-│ ├── benchmarks.py # Mean, Naive, Seasonal Naive, Drift
-│ ├── sarimax.py # SARIMA/SARIMAX with AIC grid search
-│ └── neural.py # LSTM model definition and training
-├── notebooks/
-│ ├── 01_data_and_eda.ipynb # data preparation, EDA, stationarity tests
-│ ├── 02_benchmarks.ipynb # benchmark forecasts
-│ ├── 03_sarimax.ipynb # SARIMA model selection and forecasting
-│ ├── 04_temperature_sarimax.ipynb # SARIMAX with temperature covariates
-│ ├── 05_feature_model.ipynb # gradient boosting regressor
-│ └── 06_lstm.ipynb # LSTM on hourly data
-├── outputs/
-│ ├── figures/ # all forecast and diagnostic plots
-│ ├── forecasts/ # model forecast CSVs
-│ └── metrics/ # evaluation metric CSVs
-├── requirements.txt
-└── README.md
 
----
+| Folder / File | Description |
+|---|---|
+| `data/raw/` | Raw OPSD CSV (not committed — download manually) |
+| `src/electricity_demand/data.py` | Load, clean and resample OPSD data |
+| `src/electricity_demand/features.py` | Temperature, lag, rolling and calendar features |
+| `src/electricity_demand/evaluation.py` | MAE, RMSE, MASE, Bias metrics |
+| `src/electricity_demand/models/benchmarks.py` | Mean, Naive, Seasonal Naive, Drift |
+| `src/electricity_demand/models/sarimax.py` | SARIMA/SARIMAX with AIC grid search |
+| `src/electricity_demand/models/neural.py` | LSTM model definition and training |
+| `notebooks/01_data_and_eda.ipynb` | Data preparation, EDA, stationarity tests |
+| `notebooks/02_benchmarks.ipynb` | Benchmark forecasts |
+| `notebooks/03_sarimax.ipynb` | SARIMA model selection and forecasting |
+| `notebooks/04_temperature_sarimax.ipynb` | SARIMAX with temperature covariates |
+| `notebooks/05_feature_model.ipynb` | Gradient Boosting with engineered features |
+| `notebooks/06_lstm.ipynb` | LSTM on hourly data |
+| `outputs/figures/` | All forecast and diagnostic plots |
+| `outputs/forecasts/` | Model forecast CSVs |
+| `outputs/metrics/` | Evaluation metric CSVs |
+| `requirements.txt` | Python dependencies |
 
 ## Installation
 
@@ -110,6 +104,5 @@ All outputs (figures, forecasts, metrics) are saved to `outputs/`.
 Israt Islam | Student ID: 23082056
 Advanced Research Topics in Data Science
 University of Hertfordshire
-Click the copy button in the top right corner of the code block and paste directly into GitHub. 🌙
 
 
